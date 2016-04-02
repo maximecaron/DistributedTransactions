@@ -37,6 +37,22 @@ func (fl *Flease) IsHoldingLease(l *Lease) (bool) {
  return l!=nil && time.Now().Before(l.Timeout) && l.P == fl.p
 }
 
+func (fl *Flease) WithLease(fn func(<- chan time.Time)) time.Time {
+    for { 
+          lease, err := fl.GetLease();
+          if (err !=nil) {
+             // fmt.Printf("P1 %s",err.Error())
+          } else if (lease == nil){
+              fmt.Printf("P1 lease was nil\n")
+          } else if (fl.IsHoldingLease(lease)) {
+              fn(time.After(lease.Timeout.Sub(time.Now())))
+              return lease.Timeout
+          } else {
+              time.Sleep(lease.Timeout.Sub(time.Now()))
+          }
+    }
+}
+
 func (fl *Flease) GetLease() (*Lease,error) {
     var l *Lease = nil
     now := time.Now()

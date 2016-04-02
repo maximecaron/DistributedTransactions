@@ -6,6 +6,7 @@ import (
 "runtime"
    // "github.com/maximecaron/DistributedTransactions/service"
     "github.com/maximecaron/DistributedTransactions/roundRegister"
+    "math/rand"
 )
 
 func main() {
@@ -31,72 +32,42 @@ func main() {
     fl3 := roundRegister.NewFlease("p3",t3,peerlist)
       
     go  func () {
-        leader := false
         for { 
-          lease, err := fl1.GetLease();
-          if (err !=nil) {
-             // fmt.Printf("P1 %s",err.Error())
-          } else if (lease == nil){
-              fmt.Printf("P1 lease was nil\n")
-          } else if (fl1.IsHoldingLease(lease)){
-              if (leader == false) {
-                 fmt.Printf("P1 got lease\n") 
-                 leader = true
-              }
-          } else {
-              leader = false
-              fmt.Printf("P1: lease is held by %s\n",lease.P)
-              time.Sleep(lease.Timeout.Sub(time.Now()))
-          }
-        }
-
-    }()
-    
-    go  func () {
-        leader := false
-        for { 
-          lease, err := fl2.GetLease();
-          if (err !=nil) {
-             // fmt.Printf("P2 %s",err.Error())
-          } else if (lease == nil){
-              fmt.Printf("P2 lease was nil\n")
-          } else if (fl2.IsHoldingLease(lease)){
-              if (leader == false) {
-                 fmt.Printf("P2 got lease\n") 
-                 leader = true
-              }
-          } else {
-              leader = false;
-              fmt.Printf("P2: lease is held by %s\n",lease.P)
-              time.Sleep(lease.Timeout.Sub(time.Now()))
-          }
+            fl1.WithLease(func (timeout <- chan time.Time) {
+                fmt.Printf("P1 got lease\n")
+                // call fl1.GetLease() to renew
+                
+                // Wait for lease timeout
+                <- timeout
+            })
+            time.Sleep(time.Duration(rand.Int31n(1000)) * time.Millisecond)
         }
     }()
     
     go  func () {
-        leader := false
-        for { 
-          lease, err := fl3.GetLease();
-          if (err !=nil) {
-           //   fmt.Printf("P3 %s",err.Error())
-          } else if (lease == nil){
-              fmt.Printf("P3 lease was nil\n")
-          } else if (fl3.IsHoldingLease(lease)){
-              if (leader == false) {
-                 fmt.Printf("P3 got lease\n") 
-                 leader = true
-              }
-          } else {
-              leader = false;
-              fmt.Printf("P3: lease is held by %s\n",lease.P)
-              time.Sleep(lease.Timeout.Sub(time.Now()))
-          }
+          for { 
+             fl2.WithLease(func (timeout <- chan time.Time) {
+                fmt.Printf("P2 got lease\n") 
+                // call fl2.GetLease() to renew
+                // Wait for lease timeout
+                <- timeout
+            })
+            time.Sleep(time.Duration(rand.Int31n(1000)) * time.Millisecond)
         }
     }()
     
+    go  func () {
+        for { 
+            fl3.WithLease(func (timeout <- chan time.Time) {
+                fmt.Printf("P3 got lease\n") 
+                // call fl3.GetLease() to renew
+                //Wait for lease timeout
+                <- timeout
+            })
+            time.Sleep(time.Duration(rand.Int31n(1000)) * time.Millisecond)
+        }
+    }()
     
-    
-   
     for {
         time.Sleep(time.Microsecond)
     }
