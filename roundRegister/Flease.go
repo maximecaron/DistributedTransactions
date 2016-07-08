@@ -85,16 +85,13 @@ func (fl *Flease) GetLease() (*Lease,error) {
                Timeout: now.Add(fl.tmax),
            } 
         }
-        
+        // current process must always ensure that any lease it returns has been
+        // successfully written to the register, regardless of whether the lease is owned by it
+        // because writes can be incomplete
+        writeErr := fl.register.Write(now, l)
+        if (writeErr == nil){
+            return l, nil
+        }
     } 
-    
-    // current process must always ensure that any lease it returns has been
-    // successfully written to the register, regardless of whether the lease is owned by it
-    // because writes can be incomplete
-    writeErr := fl.register.Write(now, l)
-    if (writeErr == nil){
-        return l, nil
-    }
-    
     return nil, fmt.Errorf("abort")
 }
