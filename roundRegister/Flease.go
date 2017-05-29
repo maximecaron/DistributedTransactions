@@ -23,6 +23,8 @@ func NewFlease(p string, tr Transport, peersList []string) (*Flease) {
 
 func NewFleaseWithEps(p string, tr Transport, peersList []string, eps time.Duration, tmax time.Duration) (*Flease) {
     // wait (tmax+eps) before RoundRegister can respond to request
+    // while waiting, participates in Paxos as a non-voting member
+    //  does not respond with promise or acknowledgment messages
     rr := NewRoundRegister(tr, peersList, tmax + eps)
     flease := &Flease{
         p: p,
