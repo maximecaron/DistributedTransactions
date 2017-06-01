@@ -45,11 +45,12 @@ func (fl *Flease) WithLease(fn func(<- chan time.Time)) time.Time {
           if (err !=nil) {
              // fmt.Printf("P1 %s",err.Error())
           } else if (lease == nil){
-              fmt.Printf("P1 lease was nil\n")
+              //fmt.Printf(" %s: lease was nil\n",fl.p)
           } else if (fl.IsHoldingLease(lease)) {
               fn(time.After(lease.Timeout.Sub(time.Now())))
               return lease.Timeout
           } else {
+              //fmt.Printf("%s sleep",fl.p)
               time.Sleep(lease.Timeout.Sub(time.Now()))
           }
     }
@@ -91,7 +92,7 @@ func (fl *Flease) GetLease() (*Lease,error) {
            } 
         }
         // current process must always ensure that any lease it returns has been
-        // successfully written to the register, regardless of whether the lease is owned by it
+        // successfully written to the register, regardless of whether it own it
         // because writes can be incomplete
         writeErr := fl.register.Write(now, l)
         if (writeErr == nil){

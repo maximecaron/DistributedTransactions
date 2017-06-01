@@ -11,6 +11,7 @@ import (
 
 func main() {
     runtime.GOMAXPROCS(6)
+    fmt.Printf("program start\n")
     
     // Create 3 simulated transport connected together
     addr1,t1 :=  roundRegister.NewInmemTransport()
@@ -39,6 +40,7 @@ func main() {
                 
                 // Wait for lease timeout
                 <- timeout
+                fmt.Printf("P1 lease timeout\n")
             })
             time.Sleep(time.Duration(rand.Int31n(1000)) * time.Millisecond)
         }
@@ -51,6 +53,7 @@ func main() {
                 // call fl2.GetLease() to renew
                 // Wait for lease timeout
                 <- timeout
+                fmt.Printf("P2 lease timeout\n")
             })
             time.Sleep(time.Duration(rand.Int31n(1000)) * time.Millisecond)
         }
@@ -63,13 +66,14 @@ func main() {
                 // call fl3.GetLease() to renew
                 //Wait for lease timeout
                 <- timeout
+                fmt.Printf("P3 lease timeout\n")
             })
             time.Sleep(time.Duration(rand.Int31n(1000)) * time.Millisecond)
         }
     }()
     
     for {
-        time.Sleep(time.Microsecond)
+        time.Sleep(time.Second)
     }
 
 

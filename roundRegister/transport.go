@@ -87,6 +87,8 @@ func (i *InmemTransport) makeRPC(target string, command interface{}) (rpcResp RP
 		if rpcResp.Error != nil {
 			err = rpcResp.Error
 		}
+		case <-time.After(i.timeout):
+			err = fmt.Errorf("command timed out")
 	}
 	return
 }
@@ -97,4 +99,10 @@ func (i *InmemTransport) Connect(peer string, trans *InmemTransport) {
 	i.Lock()
 	defer i.Unlock()
 	i.peers[peer] = trans
+}
+
+func (i *InmemTransport) Disconnect(peer string) {
+	i.Lock()
+	defer i.Unlock()
+	delete(i.peers, peer)
 }
