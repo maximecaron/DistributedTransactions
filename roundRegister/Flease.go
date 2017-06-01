@@ -23,6 +23,8 @@ func NewFlease(p string, tr Transport, peersList []string) (*Flease) {
 
 func NewFleaseWithEps(p string, tr Transport, peersList []string, eps time.Duration, tmax time.Duration) (*Flease) {
     // wait (tmax+eps) before RoundRegister can respond to request
+    // while waiting, participates in Paxos as a non-voting member
+    //  does not respond with promise or acknowledgment messages
     rr := NewRoundRegister(tr, peersList, tmax + eps)
     flease := &Flease{
         p: p,
@@ -88,16 +90,13 @@ func (fl *Flease) GetLease() (*Lease,error) {
                Timeout: now.Add(fl.tmax),
            } 
         }
-        
+        // current process must always ensure that any lease it returns has been
+        // successfully written to the register, regardless of whether the lease is owned by it
+        // because writes can be incomplete
+        writeErr := fl.register.Write(now, l)
+        if (writeErr == nil){
+            return l, nil
+        }
     } 
-    
-    // current process must always ensure that any lease it returns has been
-    // successfully written to the register, regardless of whether the lease is owned by it
-    // because writes can be incomplete
-    writeErr := fl.register.Write(now, l)
-    if (writeErr == nil){
-        return l, nil
-    }
-    
     return nil, fmt.Errorf("abort")
 }
