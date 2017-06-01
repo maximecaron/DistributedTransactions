@@ -59,12 +59,15 @@ func (fl *Flease) GetLease() (*Lease,error) {
    
     readErr, val := fl.register.Read(now)
     
-    if (readErr == nil){       
+    if (readErr == nil){
+        // Sucessful read from majority of Nodes  
         if (val != nil){
+            // if lease is not empty
             l = val.(*Lease)
         }
         
         if (l !=nil && now.After(l.Timeout) && l.Timeout.Add(fl.epsilon).After(now) ){
+            // Lease is not empty but
             // since l.Timeout + epsilon is > now
             // its possible the process holding the lease still think its still hold it
             // we wait for maximum clock drift time and retry 
@@ -73,13 +76,13 @@ func (fl *Flease) GetLease() (*Lease,error) {
         }
         
         if (l == nil || now.After(l.Timeout) ){
-           // lease is expired, trying to acquire it
+           // lease is empty ot expired, trying to acquire it
            l = &Lease {
                P: fl.p,
                Timeout: now.Add(fl.tmax),
            } 
         } else if (l.P == fl.p) {
-           // We are holding the lease but need to renew it
+           // We are already holding the lease but need to renew it
            l = &Lease {
                P: fl.p,
                Timeout: now.Add(fl.tmax),
