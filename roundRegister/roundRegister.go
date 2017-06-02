@@ -11,6 +11,7 @@ const (
     ackREADType
     nackWRITEType
     ackWriteType
+    bootStraping
 )
 type roundRegisterCommandType int
 const (
@@ -40,14 +41,14 @@ type RoundRegister struct {
     transport Transport
 }
 
-func NewRoundRegister(tr Transport, peersList []string, bootStrap time.Duration) (*RoundRegister) {
+func NewRoundRegister(tr Transport, peersList []string, bootStrapDuration time.Duration) (*RoundRegister) {
 	r := &RoundRegister{
 		read: time.Now(),
         write: time.Now(),
         value: nil,
         transport: tr,
 		peers:      peersList,
-        bootStrap: bootStrap,
+        bootStrap: bootStrapDuration,        
 	}
     go r.HandleRequests()
 	return r
@@ -80,84 +81,125 @@ func (r *RoundRegister) SendWrite(target string, k time.Time, v interface{}) (er
 
 // Read value using Round k
 func (r *RoundRegister) Read(k time.Time) (error, interface{}) {
-    respArray := []*roundRegisterResponse  {}
+    // Create a response channel
+    respCh := make(chan *roundRegisterResponse, len(r.peers))
+    peerRead := func(peer string, k time.Time) {
+            err, resp := r.SendRead(peer, k)
+            if (err == nil){
+                respCh <- resp
+            }
+    }
     var maxWriteTime time.Time
     var maxVal interface{}
-    // wait for (n+1)/2 response
-    for _ , element := range r.peers {
-        //TODO handle RPC timeout
-        err, resp := r.SendRead(element, k)
-        if (err != nil){
-            return err, nil
-        }
-        respArray = append(respArray, resp)
-    }
     
-    // Return the element with the highest write version number 
-    // from a majority of peers
-    for _ , element := range respArray {
-        if (element.responseType== nackREADType){
-            return fmt.Errorf("abort"), nil 
-        } 
-        if (element.write.After(maxWriteTime)) {
-                maxWriteTime = element.write
-                maxVal = element.v
-        } 
+    for _ , element := range r.peers {
+        go peerRead(element, k)
     }
+
+    responseReceived := 0
+    responseNeeded := r.quorumSize()
+    // wait for (n+1)/2 response
+    for responseReceived < responseNeeded {
+        select {
+        case response := <-respCh:
+        if (response.responseType == nackREADType){
+               return fmt.Errorf("abort"), nil 
+        } 
+        if (response.responseType != bootStraping) {
+          // Return the element with the highest write version number 
+          if (response.write.After(maxWriteTime)) {
+                maxWriteTime = response.write
+                maxVal = response.v
+          } 
+          responseReceived++
+        }
+        case <-time.After(50 * time.Millisecond):
+            return fmt.Errorf("timeout"), nil
+        }
+    }
+
     return nil, maxVal
+}
+
+func (r *RoundRegister) quorumSize() int {
+    return (len(r.peers) / 2) +1;
 }
 
 // Write value using round k
 func (r *RoundRegister) Write(k time.Time, value interface{}) error {
-    // wait for (n+1)/2 response
+    // Create a response channel
+    respCh := make(chan *roundRegisterResponse, len(r.peers))
+    peerWrite := func(peer string) {
+        err, resp  := r.SendWrite(peer, k, value)
+        if (err ==nil){ 
+           respCh <- resp
+        }
+    }
     for _ , element := range r.peers {
-        //TODO handle RPC timeout
-        err, resp  := r.SendWrite(element, k, value)
-        if (err !=nil){ 
-           return err
-        }
-        if (resp.responseType == nackWRITEType){
-            // if received at least one nack abort
-            return fmt.Errorf("abort")
-        }
-        
+        go peerWrite(element)
+    }
+    responseReceived := 0
+    responseNeeded := r.quorumSize()
+    // wait for (n+1)/2 response
+    for responseReceived < responseNeeded {
+        select {
+        case resp := <-respCh:
+          if (resp.responseType != bootStraping) {
+            if (resp.responseType == nackWRITEType){
+              // if received at least one nack abort
+              return fmt.Errorf("abort")
+            }
+            responseReceived++
+          }
+        case <-time.After(50 * time.Millisecond):
+          return fmt.Errorf("timeout")
+       }
     }
     // Received ack from (n+1)/2 node, Commit
     return nil
     
 }
 
-
-func (r *RoundRegister) HandleRequest(req *roundRegisterCommand) (*roundRegisterResponse, error){
- resp := &roundRegisterResponse {}
- // Handle read request
- if (req.CommandType == readType) {
-        if (r.write.After(req.K)  || r.read.After(req.K)) {
+func (r *RoundRegister) handleRead(req *roundRegisterCommand) (*roundRegisterResponse, error){
+  resp := &roundRegisterResponse {}
+   if (r.write.After(req.K)  || r.read.After(req.K)) {
             resp.responseType = nackREADType
             resp.k = req.K
-        } else {
+   } else {
             r.read = req.K
             resp.responseType = ackREADType
             resp.k = req.K
             resp.write = r.write
             resp.v = r.value
-        }
-    return resp, nil 
+   }
+   return resp, nil 
+}
+
+func (r *RoundRegister) handleWrite(req *roundRegisterCommand) (*roundRegisterResponse, error){
+  resp := &roundRegisterResponse {}
+  if (r.write.After(req.K) || r.read.After(req.K)) {
+    resp.responseType = nackWRITEType
+    resp.k = req.K
+  } else {
+    r.write = req.K
+    r.value = req.V
+    resp.responseType = ackWriteType
+    resp.k = req.K
+  }
+  return resp, nil  
+}
+
+func (r *RoundRegister) HandleRequest(req *roundRegisterCommand) (*roundRegisterResponse, error){
+ resp := &roundRegisterResponse {}
+ switch req.CommandType {
+ case readType:
+     return r.handleRead(req)
+ case writeType:
+    return r.handleWrite(req)
+ default:
+    return resp, fmt.Errorf("unknow command")
  }
- // Handle write request
- if (req.CommandType == writeType) {
-    if (r.write.After(req.K) || r.read.After(req.K)) {
-         resp.responseType = nackWRITEType
-         resp.k = req.K
-    } else {
-        r.write = req.K
-        r.value = req.V
-        resp.responseType = ackWriteType
-        resp.k = req.K
-    }
-    return resp, nil  
- }
- return resp, fmt.Errorf("unknow command")
+ 
 }
 
 // Listen for request in loop
