@@ -11,7 +11,6 @@ const (
     ackREADType
     nackWRITEType
     ackWriteType
-    bootStraping
 )
 type roundRegisterCommandType int
 const (
@@ -105,14 +104,13 @@ func (r *RoundRegister) Read(k time.Time) (error, interface{}) {
         if (response.responseType == nackREADType){
                return fmt.Errorf("abort"), nil 
         } 
-        if (response.responseType != bootStraping) {
-          // Return the element with the highest write version number 
-          if (response.write.After(maxWriteTime)) {
-                maxWriteTime = response.write
-                maxVal = response.v
-          } 
-          responseReceived++
-        }
+        // Return the element with the highest write version number 
+        if (response.write.After(maxWriteTime)) {
+            maxWriteTime = response.write
+            maxVal = response.v
+        } 
+        responseReceived++
+
         case <-time.After(50 * time.Millisecond):
             return fmt.Errorf("timeout"), nil
         }
@@ -144,13 +142,11 @@ func (r *RoundRegister) Write(k time.Time, value interface{}) error {
     for responseReceived < responseNeeded {
         select {
         case resp := <-respCh:
-          if (resp.responseType != bootStraping) {
             if (resp.responseType == nackWRITEType){
               // if received at least one nack abort
               return fmt.Errorf("abort")
             }
             responseReceived++
-          }
         case <-time.After(50 * time.Millisecond):
           return fmt.Errorf("timeout")
        }
@@ -204,6 +200,7 @@ func (r *RoundRegister) HandleRequest(req *roundRegisterCommand) (*roundRegister
 
 // Listen for request in loop
 func (r *RoundRegister) HandleRequests() {
+        fmt.Printf("sleep for %s\n",r.bootStrap)
         time.Sleep(r.bootStrap)
 		for {
 			select {
