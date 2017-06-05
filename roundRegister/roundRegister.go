@@ -4,8 +4,17 @@ import (
   "fmt"
 )
 
-type roundRegisterResponseType int
+// Ballot number include proposer id make ballot unique
+type ballot struct {
+    proposer int 
+    time time.Time
+}
 
+func (b *ballot) After(other *ballot) bool {
+    return true
+}
+
+type roundRegisterResponseType int
 const (
     nackREADType roundRegisterResponseType  = iota
     ackREADType
@@ -30,10 +39,11 @@ type roundRegisterCommand struct {
     V interface{}
 }
 
+// R. Boichat, P. Dutta, S. Frolund, and R. Guerraoui, “Deconstructing paxos,” SIGACT News, vol. 34, no. 1,
 type RoundRegister struct {
     bootStrap time.Duration
-	read time.Time
-    write time.Time
+	read time.Time // highest read ballot accepted
+    write time.Time // highest write ballot accepted 
     value interface{}
     //The number of peers must be known in advance and must not increase during runtime,
     peers []string 
@@ -41,6 +51,10 @@ type RoundRegister struct {
 }
 
 func NewRoundRegister(tr Transport, peersList []string, bootStrapDuration time.Duration) (*RoundRegister) {
+    // To enable crash-recovery model without Persistent State:
+    // we init read and write ballot to current time
+    // this ensure that the register will abort a read or write request 
+    // with ballot smaller than the ballot seen before crash
 	r := &RoundRegister{
 		read: time.Now(),
         write: time.Now(),
@@ -111,7 +125,8 @@ func (r *RoundRegister) Read(k time.Time) (error, interface{}) {
         } 
         responseReceived++
 
-        case <-time.After(50 * time.Millisecond):
+        case <-time.After(200 * time.Millisecond):
+             
             return fmt.Errorf("timeout"), nil
         }
     }
@@ -158,7 +173,8 @@ func (r *RoundRegister) Write(k time.Time, value interface{}) error {
 
 func (r *RoundRegister) handleRead(req *roundRegisterCommand) (*roundRegisterResponse, error){
   resp := &roundRegisterResponse {}
-   if (r.write.After(req.K)  || r.read.After(req.K)) {
+   // If a read or write was already received with ballot larger or equal to the request  abort
+   if (!req.K.After(r.write)  || !req.K.After(r.read)) {
             resp.responseType = nackREADType
             resp.k = req.K
    } else {
@@ -173,6 +189,7 @@ func (r *RoundRegister) handleRead(req *roundRegisterCommand) (*roundRegisterRes
 
 func (r *RoundRegister) handleWrite(req *roundRegisterCommand) (*roundRegisterResponse, error){
   resp := &roundRegisterResponse {}
+  // If a read or write was already received with ballot  larger to the request abort
   if (r.write.After(req.K) || r.read.After(req.K)) {
     resp.responseType = nackWRITEType
     resp.k = req.K
@@ -200,7 +217,9 @@ func (r *RoundRegister) HandleRequest(req *roundRegisterCommand) (*roundRegister
 
 // Listen for request in loop
 func (r *RoundRegister) HandleRequests() {
-        fmt.Printf("sleep for %s\n",r.bootStrap)
+        // To enable crash-recovery model  without Persistent State:
+        // we guarantee that any lease which was in the register when the
+        // process crashed has timed out by sleeping (tmax) before accepting request
         time.Sleep(r.bootStrap)
 		for {
 			select {
@@ -208,10 +227,14 @@ func (r *RoundRegister) HandleRequests() {
 				// Verify the command
 				req := rpc.Command.(*roundRegisterCommand)
                 resp, err := r.HandleRequest(req)
-                rpc.RespChan <- RPCResponse {
+                select  {
+                    case rpc.RespChan <- RPCResponse {
                     Response: resp,
                     Error: err,
-                }	
+                    }:
+                    case <- time.After(50 * time.Millisecond):
+                }
+                
 			}
 		}
 }

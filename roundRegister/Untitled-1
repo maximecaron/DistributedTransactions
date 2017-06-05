@@ -13,20 +13,16 @@ type Lease struct {
 type Flease struct {
     register *RoundRegister // pa
     tmax time.Duration // maximum time span of lease validity
-    epsilon time.Duration // maximum clock time difference between any 2 process
+    epsilon time.Duration // maximum clock time difference
     p string // local process
 }
 
 func NewFlease(p string, tr Transport, peersList []string) (*Flease) {
-    return NewFleaseWithEps(p,tr,peersList,time.Millisecond, 0)
+    return NewFleaseWithEps(p,tr,peersList,time.Second, time.Second*14)
 }
 
 func NewFleaseWithEps(p string, tr Transport, peersList []string, eps time.Duration, tmax time.Duration) (*Flease) {
-    // For the system to make progress, we require we require (tmax > eps)
-
     // wait (tmax+eps) before RoundRegister can respond to request
-    // while waiting, participates in Paxos as a non-voting member
-    //  does not respond with promise or acknowledgment messages
     rr := NewRoundRegister(tr, peersList, tmax + eps)
     flease := &Flease{
         p: p,
@@ -47,12 +43,11 @@ func (fl *Flease) WithLease(fn func(<- chan time.Time)) time.Time {
           if (err !=nil) {
              // fmt.Printf("P1 %s",err.Error())
           } else if (lease == nil){
-             fmt.Printf(" %s: lease was nil\n",fl.p)
+              fmt.Printf("P1 lease was nil\n")
           } else if (fl.IsHoldingLease(lease)) {
               fn(time.After(lease.Timeout.Sub(time.Now())))
               return lease.Timeout
           } else {
-              //fmt.Printf("%s sleep",fl.p)
               time.Sleep(lease.Timeout.Sub(time.Now()))
           }
     }
@@ -60,7 +55,6 @@ func (fl *Flease) WithLease(fn func(<- chan time.Time)) time.Time {
 
 func (fl *Flease) GetLease() (*Lease,error) {
     var l *Lease = nil
-
     now := time.Now()
    
     readErr, val := fl.register.Read(now)
@@ -82,7 +76,7 @@ func (fl *Flease) GetLease() (*Lease,error) {
         }
         
         if (l == nil || now.After(l.Timeout) ){
-           // lease is empty or expired, trying to acquire it
+           // lease is empty ot expired, trying to acquire it
            l = &Lease {
                P: fl.p,
                Timeout: now.Add(fl.tmax),
@@ -94,14 +88,16 @@ func (fl *Flease) GetLease() (*Lease,error) {
                Timeout: now.Add(fl.tmax),
            } 
         }
-        // current process must always ensure that any lease it returns has been
-        // successfully written to the register, regardless of whether it own it
-        // because writes can be incomplete
-        writeErr := fl.register.Write(now, l)
-        if (writeErr == nil){
-            return l, nil
-        } 
-        return nil, writeErr
+        
     } 
-    return nil, readErr
+    
+    // current process must always ensure that any lease it returns has been
+    // successfully written to the register, regardless of whether the lease is owned by it
+    // because writes can be incomplete
+    writeErr := fl.register.Write(now, l)
+    if (writeErr == nil){
+        return l, nil
+    }
+    
+    return nil, fmt.Errorf("abort")
 }

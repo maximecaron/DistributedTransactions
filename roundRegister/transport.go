@@ -75,7 +75,7 @@ func (i *InmemTransport) makeRPC(target string, command interface{}) (rpcResp RP
 	}
 
 	// Send the RPC over
-	respCh := make(chan RPCResponse)
+	respCh := make(chan RPCResponse,1)
 	peer.consumerCh <- RPC{
 		Command:  command,
 		RespChan: respCh,

@@ -31,31 +31,35 @@ func main() {
     fl1 := roundRegister.NewFlease("p1",t1,peerlist)
     fl2 := roundRegister.NewFlease("p2",t2,peerlist)
     fl3 := roundRegister.NewFlease("p3",t3,peerlist)
-      
+    i :=0 
     go  func () {
         for { 
             fl1.WithLease(func (timeout <- chan time.Time) {
                 fmt.Printf("P1 got lease\n")
                 // call fl1.GetLease() to renew
-                
+                i++
                 // Wait for lease timeout
                 <- timeout
                 fmt.Printf("P1 lease timeout\n")
             })
             time.Sleep(time.Duration(rand.Int31n(1000)) * time.Millisecond)
+            
         }
     }()
+
     
     go  func () {
           for { 
-             fl2.WithLease(func (timeout <- chan time.Time) {
+            fl2.WithLease(func (timeout <- chan time.Time) {
                 fmt.Printf("P2 got lease\n") 
                 // call fl2.GetLease() to renew
+                i++
                 // Wait for lease timeout
                 <- timeout
                 fmt.Printf("P2 lease timeout\n")
             })
             time.Sleep(time.Duration(rand.Int31n(1000)) * time.Millisecond)
+            
         }
     }()
     
@@ -64,6 +68,7 @@ func main() {
             fl3.WithLease(func (timeout <- chan time.Time) {
                 fmt.Printf("P3 got lease\n") 
                 // call fl3.GetLease() to renew
+                i++
                 //Wait for lease timeout
                 <- timeout
                 fmt.Printf("P3 lease timeout\n")
@@ -71,7 +76,8 @@ func main() {
             time.Sleep(time.Duration(rand.Int31n(1000)) * time.Millisecond)
         }
     }()
-    
+  
+
     for {
         time.Sleep(time.Second)
     }
