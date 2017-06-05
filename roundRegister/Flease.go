@@ -2,6 +2,8 @@ package roundRegister
 import (
     "fmt"
     "time"
+    "context"
+    "sync"
 )
 type Lease struct {
     Timeout time.Time // lease expiration time
@@ -11,14 +13,16 @@ type Lease struct {
 // Flease is a lease process which is fault-tolerant 
 // and consider processes that recover after a crash.
 type Flease struct {
+    sync.RWMutex
     register *RoundRegister // pa
     tmax time.Duration // maximum time span of lease validity
     epsilon time.Duration // maximum clock time difference between any 2 process
     p string // local process
+    lease *Lease // Cache unexpired lease localy
 }
 
 func NewFlease(p string, tr Transport, peersList []string) (*Flease) {
-    return NewFleaseWithEps(p,tr,peersList,time.Millisecond, 0)
+    return NewFleaseWithEps(p,tr,peersList,0, time.Millisecond*200)
 }
 
 func NewFleaseWithEps(p string, tr Transport, peersList []string, eps time.Duration, tmax time.Duration) (*Flease) {
@@ -37,28 +41,71 @@ func NewFleaseWithEps(p string, tr Transport, peersList []string, eps time.Durat
     return flease
 }
 
-func (fl *Flease) IsHoldingLease(l *Lease) (bool) {
- return l!=nil && time.Now().Before(l.Timeout) && l.P == fl.p
+func (fl *Flease) IsLeaseValid(l *Lease) (bool) {
+ return l!=nil && time.Now().Before(l.Timeout)
 }
 
-func (fl *Flease) WithLease(fn func(<- chan time.Time)) time.Time {
+func (fl *Flease) IsHoldingLease(l *Lease) (bool) {
+ return fl.IsLeaseValid(l) && l.P == fl.p
+}
+
+func (fl *Flease) WithLease(fn func(<- chan time.Time)) (time.Time, error) {
     for { 
-          lease, err := fl.GetLease();
-          if (err !=nil) {
-             // fmt.Printf("P1 %s",err.Error())
-          } else if (lease == nil){
-             fmt.Printf(" %s: lease was nil\n",fl.p)
-          } else if (fl.IsHoldingLease(lease)) {
+          fl.RLock()
+          lease := fl.lease
+          fl.RUnlock()
+          if (!fl.IsLeaseValid(lease)){
+            newlease, err := fl.GetLease();
+            if (err != nil) {
+             return time.Now(), err
+            }
+            lease = newlease
+            // Cache the lease
+            fl.Lock()
+            fl.lease = lease
+            fl.Unlock()
+          } 
+          if (fl.IsHoldingLease(lease)) {
+             ctx, cancel := context.WithCancel(context.TODO())
+             defer cancel() // after scope make sure the goroutine operation are cancelled
+             // Start goroutine to renew lease in a loop
+             go func () {
+                    renewLease := lease;
+                    for { 
+                        select {
+                            case <-ctx.Done():
+                             return
+                            default:
+                               remainingTime := renewLease.Timeout.Sub(time.Now())
+                               time.Sleep( remainingTime / 2)
+                               renewLease,_ = fl.GetLease();
+                        }
+                    }
+              }()
               fn(time.After(lease.Timeout.Sub(time.Now())))
-              return lease.Timeout
+              return lease.Timeout, nil
           } else {
-              //fmt.Printf("%s sleep",fl.p)
+              // sleep before retry to avoid wasting time reading latest lease 
               time.Sleep(lease.Timeout.Sub(time.Now()))
           }
     }
 }
 
 func (fl *Flease) GetLease() (*Lease,error) {
+    for { 
+          lease, err := fl.TryGetLease();
+          if (err !=nil) {
+            // Consensu iteration failed
+            //fmt.Printf("%s %s\n",fl.p, err.Error())
+          } else if (lease == nil){
+            fmt.Printf("lease is nil")
+          } else {
+              return lease, nil
+          }
+    }
+}
+
+func (fl *Flease) TryGetLease() (*Lease,error) {
     var l *Lease = nil
 
     now := time.Now()

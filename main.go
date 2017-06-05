@@ -2,15 +2,14 @@ package main
 
 import (
     "fmt"
-"time"
-"runtime"
+    "time"
    // "github.com/maximecaron/DistributedTransactions/service"
     "github.com/maximecaron/DistributedTransactions/roundRegister"
     "math/rand"
 )
 
+
 func main() {
-    runtime.GOMAXPROCS(6)
     fmt.Printf("program start\n")
     
     // Create 3 simulated transport connected together
@@ -31,18 +30,24 @@ func main() {
     fl1 := roundRegister.NewFlease("p1",t1,peerlist)
     fl2 := roundRegister.NewFlease("p2",t2,peerlist)
     fl3 := roundRegister.NewFlease("p3",t3,peerlist)
-    i :=0 
+    var locked = false
+
     go  func () {
         for { 
             fl1.WithLease(func (timeout <- chan time.Time) {
-                fmt.Printf("P1 got lease\n")
-                // call fl1.GetLease() to renew
-                i++
-                // Wait for lease timeout
-                <- timeout
-                fmt.Printf("P1 lease timeout\n")
+                select {
+                    case <- timeout:
+                    default:
+                      if (locked) {
+                        panic("already locked")
+                      }
+                      locked = true
+                      fmt.Printf("P1 got the lock \n")
+                      time.Sleep(time.Millisecond*100)
+                      locked = false
+                }
             })
-            time.Sleep(time.Duration(rand.Int31n(1000)) * time.Millisecond)
+            time.Sleep(time.Duration(rand.Int31n(500)) * time.Millisecond)
             
         }
     }()
@@ -51,14 +56,19 @@ func main() {
     go  func () {
           for { 
             fl2.WithLease(func (timeout <- chan time.Time) {
-                fmt.Printf("P2 got lease\n") 
-                // call fl2.GetLease() to renew
-                i++
-                // Wait for lease timeout
-                <- timeout
-                fmt.Printf("P2 lease timeout\n")
+                select {
+                    case <- timeout:
+                    default:
+                      if (locked) {
+                        panic("already locked")
+                      }
+                      locked = true
+                      fmt.Printf("P2 got the lock \n")
+                      time.Sleep(time.Millisecond*100)
+                      locked = false
+                }
             })
-            time.Sleep(time.Duration(rand.Int31n(1000)) * time.Millisecond)
+            time.Sleep(time.Duration(rand.Int31n(500)) * time.Millisecond)
             
         }
     }()
@@ -66,14 +76,19 @@ func main() {
     go  func () {
         for { 
             fl3.WithLease(func (timeout <- chan time.Time) {
-                fmt.Printf("P3 got lease\n") 
-                // call fl3.GetLease() to renew
-                i++
-                //Wait for lease timeout
-                <- timeout
-                fmt.Printf("P3 lease timeout\n")
+                select {
+                    case <- timeout:
+                    default:
+                      if (locked) {
+                        panic("already locked")
+                      }
+                      locked = true
+                      fmt.Printf("P3 got the lock \n")
+                      time.Sleep(time.Millisecond*100)
+                      locked = false
+                }
             })
-            time.Sleep(time.Duration(rand.Int31n(1000)) * time.Millisecond)
+            time.Sleep(time.Duration(rand.Int31n(500)) * time.Millisecond)
         }
     }()
   

@@ -2,6 +2,7 @@ package roundRegister
 import (
   "time"
   "fmt"
+  "context"
 )
 
 // Ballot number include proposer id make ballot unique
@@ -67,11 +68,11 @@ func NewRoundRegister(tr Transport, peersList []string, bootStrapDuration time.D
 	return r
 }
 
-func (r *RoundRegister) SendRead(target string, k time.Time) (error, *roundRegisterResponse) {
+func (r *RoundRegister) SendRead(ctx context.Context, target string, k time.Time) (error, *roundRegisterResponse) {
     cmd := &roundRegisterCommand{}
     cmd.CommandType = readType
     cmd.K = k
-    resp, err := r.transport.makeRPC(target,cmd)
+    resp, err := r.transport.makeRPC(ctx, target, cmd)
     if (err != nil){
         return err, nil
     }
@@ -79,12 +80,12 @@ func (r *RoundRegister) SendRead(target string, k time.Time) (error, *roundRegis
     return nil, roundRegisterResp
 }
 
-func (r *RoundRegister) SendWrite(target string, k time.Time, v interface{}) (error, *roundRegisterResponse) {
+func (r *RoundRegister) SendWrite(ctx context.Context, target string, k time.Time, v interface{}) (error, *roundRegisterResponse) {
     cmd := &roundRegisterCommand{}
     cmd.CommandType = writeType
     cmd.K = k
     cmd.V = v
-    resp, err := r.transport.makeRPC(target,cmd)
+    resp, err := r.transport.makeRPC(ctx, target, cmd)
     if (err != nil){
         return err, nil
     }
@@ -96,10 +97,15 @@ func (r *RoundRegister) SendWrite(target string, k time.Time, v interface{}) (er
 func (r *RoundRegister) Read(k time.Time) (error, interface{}) {
     // Create a response channel
     respCh := make(chan *roundRegisterResponse, len(r.peers))
+    ctx, cancel := context.WithCancel(context.TODO())
+    defer cancel() // after scope make sure the goroutine operation are cancelled
     peerRead := func(peer string, k time.Time) {
-            err, resp := r.SendRead(peer, k)
+            err, resp := r.SendRead(ctx, peer, k)
             if (err == nil){
-                respCh <- resp
+                select {
+                   case <-ctx.Done(): 
+                   case respCh <- resp:
+                }
             }
     }
     var maxWriteTime time.Time
@@ -113,22 +119,20 @@ func (r *RoundRegister) Read(k time.Time) (error, interface{}) {
     responseNeeded := r.quorumSize()
     // wait for (n+1)/2 response
     for responseReceived < responseNeeded {
-        select {
+      select {
         case response := <-respCh:
-        if (response.responseType == nackREADType){
-               return fmt.Errorf("abort"), nil 
-        } 
-        // Return the element with the highest write version number 
-        if (response.write.After(maxWriteTime)) {
+          if (response.responseType == nackREADType){
+               return fmt.Errorf("read abort"), nil 
+          } 
+          // Return the element with the highest write version number 
+          if (response.write.After(maxWriteTime)) {
             maxWriteTime = response.write
             maxVal = response.v
-        } 
-        responseReceived++
-
+          } 
+          responseReceived++
         case <-time.After(200 * time.Millisecond):
-             
             return fmt.Errorf("timeout"), nil
-        }
+      }
     }
 
     return nil, maxVal
@@ -140,12 +144,18 @@ func (r *RoundRegister) quorumSize() int {
 
 // Write value using round k
 func (r *RoundRegister) Write(k time.Time, value interface{}) error {
+    ctx, cancel := context.WithCancel(context.TODO())
+    defer cancel() // after scope make sure the goroutine operation are cancelled
+
     // Create a response channel
     respCh := make(chan *roundRegisterResponse, len(r.peers))
     peerWrite := func(peer string) {
-        err, resp  := r.SendWrite(peer, k, value)
-        if (err ==nil){ 
-           respCh <- resp
+        err, resp  := r.SendWrite(ctx, peer, k, value)
+        if (err == nil){
+            select {
+                case <-ctx.Done(): 
+                case respCh <- resp:
+            }
         }
     }
     for _ , element := range r.peers {
@@ -159,7 +169,7 @@ func (r *RoundRegister) Write(k time.Time, value interface{}) error {
         case resp := <-respCh:
             if (resp.responseType == nackWRITEType){
               // if received at least one nack abort
-              return fmt.Errorf("abort")
+              return fmt.Errorf("write abort")
             }
             responseReceived++
         case <-time.After(50 * time.Millisecond):
@@ -189,7 +199,7 @@ func (r *RoundRegister) handleRead(req *roundRegisterCommand) (*roundRegisterRes
 
 func (r *RoundRegister) handleWrite(req *roundRegisterCommand) (*roundRegisterResponse, error){
   resp := &roundRegisterResponse {}
-  // If a read or write was already received with ballot  larger to the request abort
+  // If a read or write was already received with ballot larger to the request abort
   if (r.write.After(req.K) || r.read.After(req.K)) {
     resp.responseType = nackWRITEType
     resp.k = req.K
@@ -223,7 +233,7 @@ func (r *RoundRegister) HandleRequests() {
         time.Sleep(r.bootStrap)
 		for {
 			select {
-			case rpc := <-r.transport.Consumer():
+			  case rpc := <-r.transport.Consumer():
 				// Verify the command
 				req := rpc.Command.(*roundRegisterCommand)
                 resp, err := r.HandleRequest(req)
@@ -234,7 +244,7 @@ func (r *RoundRegister) HandleRequests() {
                     }:
                     case <- time.After(50 * time.Millisecond):
                 }
-                
+              // todo case <- r.stop:
 			}
 		}
 }

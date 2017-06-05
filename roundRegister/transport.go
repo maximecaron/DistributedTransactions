@@ -4,6 +4,7 @@ import (
   "sync"
   "fmt"
   crand "crypto/rand"
+  "context"
 )
 // RPCResponse captures both a response and a potential error.
 type RPCResponse struct {
@@ -19,7 +20,7 @@ type RPC struct {
 
 type Transport interface {
    Consumer() <-chan RPC
-   makeRPC(target string, command interface{}) (rpcResp RPCResponse, err error)
+   makeRPC(ctx context.Context, target string, command interface{}) (rpcResp RPCResponse, err error)
 }
 
 
@@ -64,7 +65,9 @@ func (i *InmemTransport) Consumer() <-chan RPC {
 	return i.consumerCh
 }
 
-func (i *InmemTransport) makeRPC(target string, command interface{}) (rpcResp RPCResponse, err error) {
+// Make a blocking rpc to target
+func (i *InmemTransport) makeRPC(ctx context.Context, target string, command interface{}) (rpcResp RPCResponse, err error) {
+	
 	i.RLock()
 	peer, ok := i.peers[target]
 	i.RUnlock()
@@ -76,17 +79,26 @@ func (i *InmemTransport) makeRPC(target string, command interface{}) (rpcResp RP
 
 	// Send the RPC over
 	respCh := make(chan RPCResponse,1)
-	peer.consumerCh <- RPC{
+	select {
+	   case <-ctx.Done():
+	     err = fmt.Errorf("cancelled by parent context")
+	     return
+	   case peer.consumerCh <- RPC {
 		Command:  command,
 		RespChan: respCh,
+	   }:
 	}
+
 
 	// Wait for a response
 	select {
-	case rpcResp = <-respCh:
-		if rpcResp.Error != nil {
+		case <-ctx.Done():
+	      err = fmt.Errorf("cancelled by parent context")
+	      return
+	    case rpcResp = <-respCh:
+		  if rpcResp.Error != nil {
 			err = rpcResp.Error
-		}
+		  }
 		case <-time.After(i.timeout):
 			err = fmt.Errorf("command timed out")
 	}
