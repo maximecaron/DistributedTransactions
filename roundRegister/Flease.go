@@ -8,8 +8,8 @@ import (
 )
 
 type Lease struct {
-	Timeout time.Time // lease expiration time
-	P       string    // Process holding the lease
+	Timeout     time.Time // lease expiration time
+	LeaseHolder string    // Process holding the lease
 }
 
 // Flease is a lease process which is fault-tolerant
@@ -48,7 +48,7 @@ func (fl *Flease) IsLeaseValid(l *Lease) bool {
 }
 
 func (fl *Flease) IsHoldingLease(l *Lease) bool {
-	return fl.IsLeaseValid(l) && l.P == fl.p
+	return fl.IsLeaseValid(l) && l.LeaseHolder == fl.p
 }
 
 func (fl *Flease) WithLease(fn func(<-chan time.Time)) (time.Time, error) {
@@ -133,14 +133,14 @@ func (fl *Flease) TryGetLease() (*Lease, error) {
 		if l == nil || now.After(l.Timeout) {
 			// lease is empty or expired, trying to acquire it
 			l = &Lease{
-				P:       fl.p,
-				Timeout: now.Add(fl.tmax),
+				LeaseHolder: fl.p,
+				Timeout:     now.Add(fl.tmax),
 			}
-		} else if l.P == fl.p {
+		} else if l.LeaseHolder == fl.p {
 			// We are already holding the lease but need to renew it
 			l = &Lease{
-				P:       fl.p,
-				Timeout: now.Add(fl.tmax),
+				LeaseHolder: fl.p,
+				Timeout:     now.Add(fl.tmax),
 			}
 		}
 		// current process must always ensure that any lease it returns has been
