@@ -1,11 +1,13 @@
 package roundRegister
+
 import (
-  "time"
-  "sync"
-  "fmt"
-  crand "crypto/rand"
-  "context"
+	"context"
+	crand "crypto/rand"
+	"fmt"
+	"sync"
+	"time"
 )
+
 // RPCResponse captures both a response and a potential error.
 type RPCResponse struct {
 	Response interface{}
@@ -19,18 +21,17 @@ type RPC struct {
 }
 
 type Transport interface {
-   Consumer() <-chan RPC
-   makeRPC(ctx context.Context, target string, command interface{}) (rpcResp RPCResponse, err error)
+	Consumer() <-chan RPC
+	makeRPC(ctx context.Context, target string, command interface{}) (rpcResp RPCResponse, err error)
 }
 
-
-// Implement Transport interface using Channel 
+// Implement Transport interface using Channel
 type InmemTransport struct {
-    sync.RWMutex
+	sync.RWMutex
 	consumerCh chan RPC
 	localAddr  string
-    peers      map[string]*InmemTransport
-    timeout    time.Duration
+	peers      map[string]*InmemTransport
+	timeout    time.Duration
 }
 
 func generateUUID() string {
@@ -45,7 +46,6 @@ func generateUUID() string {
 		buf[8:10],
 		buf[10:16])
 }
-
 
 // NewInmemTransport is used to initialize a new transport
 // and generates a random local address.
@@ -67,7 +67,7 @@ func (i *InmemTransport) Consumer() <-chan RPC {
 
 // Make a blocking rpc to target
 func (i *InmemTransport) makeRPC(ctx context.Context, target string, command interface{}) (rpcResp RPCResponse, err error) {
-	
+
 	i.RLock()
 	peer, ok := i.peers[target]
 	i.RUnlock()
@@ -78,29 +78,28 @@ func (i *InmemTransport) makeRPC(ctx context.Context, target string, command int
 	}
 
 	// Send the RPC over
-	respCh := make(chan RPCResponse,1)
+	respCh := make(chan RPCResponse, 1)
 	select {
-	   case <-ctx.Done():
-	     err = fmt.Errorf("cancelled by parent context")
-	     return
-	   case peer.consumerCh <- RPC {
+	case <-ctx.Done():
+		err = fmt.Errorf("cancelled by parent context")
+		return
+	case peer.consumerCh <- RPC{
 		Command:  command,
 		RespChan: respCh,
-	   }:
+	}:
 	}
-
 
 	// Wait for a response
 	select {
-		case <-ctx.Done():
-	      err = fmt.Errorf("cancelled by parent context")
-	      return
-	    case rpcResp = <-respCh:
-		  if rpcResp.Error != nil {
+	case <-ctx.Done():
+		err = fmt.Errorf("cancelled by parent context")
+		return
+	case rpcResp = <-respCh:
+		if rpcResp.Error != nil {
 			err = rpcResp.Error
-		  }
-		case <-time.After(i.timeout):
-			err = fmt.Errorf("command timed out")
+		}
+	case <-time.After(i.timeout):
+		err = fmt.Errorf("command timed out")
 	}
 	return
 }
