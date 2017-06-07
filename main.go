@@ -26,9 +26,9 @@ func main() {
 	t3.Connect(addr3, t3)
 	peerlist := []string{addr1, addr2, addr3}
 
-	fl1 := roundRegister.NewFlease("p1", t1, peerlist)
-	fl2 := roundRegister.NewFlease("p2", t2, peerlist)
-	fl3 := roundRegister.NewFlease("p3", t3, peerlist)
+	fl1 := roundRegister.NewFlease(1, t1, peerlist)
+	fl2 := roundRegister.NewFlease(2, t2, peerlist)
+	fl3 := roundRegister.NewFlease(3, t3, peerlist)
 	var locked = false
 
 	go func() {
@@ -41,8 +41,8 @@ func main() {
 						panic("already locked")
 					}
 					locked = true
-					fmt.Printf("P1 got the lock \n")
-					time.Sleep(time.Millisecond * 100)
+					fmt.Printf("p1 lock\n")
+					time.Sleep(time.Millisecond * 16)
 					locked = false
 				}
 			})
@@ -60,9 +60,10 @@ func main() {
 					if locked {
 						panic("already locked")
 					}
+
 					locked = true
-					fmt.Printf("P2 got the lock \n")
-					time.Sleep(time.Millisecond * 100)
+					fmt.Printf("p2 lock\n")
+					time.Sleep(time.Millisecond * 16)
 					locked = false
 				}
 			})
@@ -81,8 +82,8 @@ func main() {
 						panic("already locked")
 					}
 					locked = true
-					fmt.Printf("P3 got the lock \n")
-					time.Sleep(time.Millisecond * 100)
+					fmt.Printf("p3 lock\n")
+					time.Sleep(time.Millisecond * 16)
 					locked = false
 				}
 			})

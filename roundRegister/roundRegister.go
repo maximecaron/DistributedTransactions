@@ -7,13 +7,35 @@ import (
 )
 
 // Ballot number include proposer id make ballot unique
-type ballot struct {
-	proposer int
-	time     time.Time
+type Ballot struct {
+	proposerID int
+	// todo: use global time for proposalNo
+	proposalNo time.Time
 }
 
-func (b *ballot) After(other *ballot) bool {
-	return true
+func (b *Ballot) After(other Ballot) bool {
+	if b.proposalNo.After(other.proposalNo) {
+		return true
+	} else if other.proposalNo.After(b.proposalNo) {
+		return false
+	} else {
+		return (b.proposerID > other.proposerID)
+	}
+}
+
+func (b *Ballot) Equal(other Ballot) bool {
+	return (b.proposerID == other.proposerID) && (b.proposalNo == other.proposalNo)
+}
+
+func (b *Ballot) String() string {
+	return fmt.Sprintf("{proposalNo:%s, proposerID:%d}", b.proposalNo, b.proposerID)
+}
+
+func NewBallot(proposerID int, proposalNo time.Time) Ballot {
+	return Ballot{
+		proposerID: proposerID,
+		proposalNo: proposalNo,
+	}
 }
 
 type roundRegisterResponseType int
@@ -34,22 +56,22 @@ const (
 
 type roundRegisterResponse struct {
 	responseType roundRegisterResponseType
-	k            time.Time
-	write        time.Time
+	k            Ballot
+	write        Ballot
 	v            interface{}
 }
 
 type roundRegisterCommand struct {
 	CommandType roundRegisterCommandType
-	K           time.Time
+	K           Ballot
 	V           interface{}
 }
 
 // R. Boichat, P. Dutta, S. Frolund, and R. Guerraoui, “Deconstructing paxos,” SIGACT News, vol. 34, no. 1,
 type RoundRegister struct {
 	bootStrap time.Duration
-	read      time.Time // highest read ballot accepted
-	write     time.Time // highest write ballot accepted
+	read      Ballot // highest read ballot accepted (paxos proposal)
+	write     Ballot // highest write ballot accepted (paxos accepted)
 	value     interface{}
 	//The number of peers must be known in advance and must not increase during runtime,
 	peers     []string
@@ -62,8 +84,8 @@ func NewRoundRegister(tr Transport, peersList []string, bootStrapDuration time.D
 	// this ensure that the register will abort a read or write request
 	// with ballot smaller than the ballot seen before crash
 	r := &RoundRegister{
-		read:      time.Now(),
-		write:     time.Now(),
+		read:      NewBallot(0, time.Now()),
+		write:     NewBallot(0, time.Now()),
 		value:     nil,
 		transport: tr,
 		peers:     peersList,
@@ -73,7 +95,7 @@ func NewRoundRegister(tr Transport, peersList []string, bootStrapDuration time.D
 	return r
 }
 
-func (r *RoundRegister) SendRead(ctx context.Context, target string, k time.Time) (error, *roundRegisterResponse) {
+func (r *RoundRegister) SendRead(ctx context.Context, target string, k Ballot) (error, *roundRegisterResponse) {
 	cmd := &roundRegisterCommand{}
 	cmd.CommandType = readType
 	cmd.K = k
@@ -85,7 +107,7 @@ func (r *RoundRegister) SendRead(ctx context.Context, target string, k time.Time
 	return nil, roundRegisterResp
 }
 
-func (r *RoundRegister) SendWrite(ctx context.Context, target string, k time.Time, v interface{}) (error, *roundRegisterResponse) {
+func (r *RoundRegister) SendWrite(ctx context.Context, target string, k Ballot, v interface{}) (error, *roundRegisterResponse) {
 	cmd := &roundRegisterCommand{}
 	cmd.CommandType = writeType
 	cmd.K = k
@@ -99,21 +121,21 @@ func (r *RoundRegister) SendWrite(ctx context.Context, target string, k time.Tim
 }
 
 // Read value using Round k
-func (r *RoundRegister) Read(k time.Time) (error, interface{}) {
+func (r *RoundRegister) Read(ctx context.Context, k Ballot) (error, interface{}) {
 	// Create a response channel
 	respCh := make(chan *roundRegisterResponse, len(r.peers))
-	ctx, cancel := context.WithCancel(context.TODO())
+	quorumCtx, cancel := context.WithCancel(ctx)
 	defer cancel() // after scope make sure the goroutine operation are cancelled
-	peerRead := func(peer string, k time.Time) {
-		err, resp := r.SendRead(ctx, peer, k)
+	peerRead := func(peer string, k Ballot) {
+		err, resp := r.SendRead(quorumCtx, peer, k)
 		if err == nil {
 			select {
-			case <-ctx.Done():
+			case <-quorumCtx.Done():
 			case respCh <- resp:
 			}
 		}
 	}
-	var maxWriteTime time.Time
+	var maxWriteTime Ballot
 	var maxVal interface{}
 
 	for _, element := range r.peers {
@@ -148,17 +170,17 @@ func (r *RoundRegister) quorumSize() int {
 }
 
 // Write value using round k
-func (r *RoundRegister) Write(k time.Time, value interface{}) error {
-	ctx, cancel := context.WithCancel(context.TODO())
+func (r *RoundRegister) Write(ctx context.Context, k Ballot, value interface{}) error {
+	quorumCtx, cancel := context.WithCancel(ctx)
 	defer cancel() // after scope make sure the goroutine operation are cancelled
 
 	// Create a response channel
 	respCh := make(chan *roundRegisterResponse, len(r.peers))
 	peerWrite := func(peer string) {
-		err, resp := r.SendWrite(ctx, peer, k, value)
+		err, resp := r.SendWrite(quorumCtx, peer, k, value)
 		if err == nil {
 			select {
-			case <-ctx.Done():
+			case <-quorumCtx.Done():
 			case respCh <- resp:
 			}
 		}
@@ -189,13 +211,14 @@ func (r *RoundRegister) Write(k time.Time, value interface{}) error {
 func (r *RoundRegister) handleRead(req *roundRegisterCommand) (*roundRegisterResponse, error) {
 	resp := &roundRegisterResponse{}
 	// If a read or write was already received with ballot larger or equal to the request  abort
-	if !req.K.After(r.write) || !req.K.After(r.read) {
+	if !req.K.After(r.read) || !req.K.After(r.write) {
 		resp.responseType = nackREADType
 		resp.k = req.K
 	} else {
 		r.read = req.K
 		resp.responseType = ackREADType
 		resp.k = req.K
+		// return ballot of last accepted value
 		resp.write = r.write
 		resp.v = r.value
 	}
@@ -205,7 +228,7 @@ func (r *RoundRegister) handleRead(req *roundRegisterCommand) (*roundRegisterRes
 func (r *RoundRegister) handleWrite(req *roundRegisterCommand) (*roundRegisterResponse, error) {
 	resp := &roundRegisterResponse{}
 	// If a read or write was already received with ballot larger to the request abort
-	if r.write.After(req.K) || r.read.After(req.K) {
+	if r.read.After(req.K) || r.write.After(req.K) {
 		resp.responseType = nackWRITEType
 		resp.k = req.K
 	} else {
